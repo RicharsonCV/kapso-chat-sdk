@@ -1,7 +1,7 @@
 import type { ChatInstance } from "chat";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { KapsoAdapter } from "./adapter.js";
-import { createKapsoAdapter } from "./factory.js";
+import { KapsoAdapter } from "../src/adapter.js";
+import { createKapsoAdapter } from "../src/factory.js";
 
 async function initializeAndGetMetadata(adapter: KapsoAdapter) {
   const logger = {

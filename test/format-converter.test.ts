@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { KapsoFormatConverter } from "./format-converter.js";
 import { Card } from "chat";
+import { describe, expect, it } from "vitest";
+import { KapsoFormatConverter } from "../src/format-converter.js";
 
 describe("KapsoFormatConverter", () => {
   const converter = new KapsoFormatConverter();
