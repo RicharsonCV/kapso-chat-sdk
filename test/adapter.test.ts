@@ -369,24 +369,28 @@ describe("KapsoAdapter", () => {
   });
 
   describe("unimplemented methods", () => {
+    it("throws an explicit error for editMessage", async () => {
+      const adapter = createTestAdapter();
+
+      await expect(
+        adapter.editMessage("kapso:123456789:15551234567", "wamid.123", "hello"),
+      ).rejects.toThrow(
+        "Kapso/WhatsApp does not support editing messages. Use postMessage() instead.",
+      );
+    });
+
+    it("throws an explicit error for deleteMessage", async () => {
+      const adapter = createTestAdapter();
+
+      await expect(
+        adapter.deleteMessage("kapso:123456789:15551234567", "wamid.123"),
+      ).rejects.toThrow("Kapso/WhatsApp does not support deleting messages.");
+    });
+
     const createAsyncCalls = () => {
       const adapter = createTestAdapter();
 
       return [
-        {
-          name: "editMessage",
-          call: () =>
-            adapter.editMessage(
-              "kapso:123456789:15551234567",
-              "wamid.123",
-              "hello",
-            ),
-        },
-        {
-          name: "deleteMessage",
-          call: () =>
-            adapter.deleteMessage("kapso:123456789:15551234567", "wamid.123"),
-        },
         {
           name: "startTyping",
           call: () => adapter.startTyping("kapso:123456789:15551234567"),

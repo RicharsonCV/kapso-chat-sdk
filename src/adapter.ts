@@ -335,11 +335,13 @@ export class KapsoAdapter implements Adapter<KapsoThreadId, KapsoRawMessage> {
     _messageId: string,
     _message: AdapterPostableMessage,
   ): Promise<RawMessage<KapsoRawMessage>> {
-    this.notImplemented("editMessage");
+    throw new Error(
+      "Kapso/WhatsApp does not support editing messages. Use postMessage() instead.",
+    );
   }
 
   async deleteMessage(_threadId: string, _messageId: string): Promise<void> {
-    this.notImplemented("deleteMessage");
+    throw new Error("Kapso/WhatsApp does not support deleting messages.");
   }
 
   async addReaction(
