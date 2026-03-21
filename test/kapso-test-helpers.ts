@@ -1,8 +1,13 @@
 import { createHmac } from "node:crypto";
 import type {
+  ContactRecord,
+  ConversationRecord,
+  MessageListResponse,
   SendMessageResponse,
+  UnifiedMessage,
   WhatsAppClient,
 } from "@kapso/whatsapp-cloud-api";
+import { GraphApiError } from "@kapso/whatsapp-cloud-api";
 import type { ChatInstance } from "chat";
 import { KapsoAdapter } from "../src/adapter.js";
 import type {
@@ -66,6 +71,140 @@ export function createSendResponse(messageId: string): SendMessageResponse {
     ],
     messages: [{ id: messageId }],
   };
+}
+
+export function createConversationRecord(
+  overrides: Partial<ConversationRecord> = {},
+): ConversationRecord {
+  const metadata =
+    typeof overrides.metadata === "object" && overrides.metadata
+      ? overrides.metadata
+      : {};
+
+  return {
+    id: "conv_123",
+    phoneNumber: "+15551234567",
+    phoneNumberId: "123456789",
+    status: "active",
+    lastActiveAt: "2025-10-28T14:25:01Z",
+    ...overrides,
+    kapso: {
+      contactName: "John Doe",
+      messagesCount: 1,
+      lastMessageId: "wamid.123",
+      lastMessageType: "text",
+      lastMessageTimestamp: "2025-10-28T14:25:01Z",
+      lastMessageText: "Hello from Kapso",
+      lastInboundAt: "2025-10-28T14:25:01Z",
+      lastOutboundAt: "2025-10-28T14:20:00Z",
+      ...(overrides.kapso ?? {}),
+    },
+    metadata,
+  };
+}
+
+export function createConversationListResponse(
+  conversations: ConversationRecord[],
+  cursors?: {
+    after?: string | null;
+    before?: string | null;
+  },
+) {
+  return {
+    data: conversations,
+    paging: {
+      cursors: {
+        after: cursors?.after,
+        before: cursors?.before,
+      },
+    },
+  };
+}
+
+export function createContactRecord(
+  overrides: Partial<ContactRecord> = {},
+): ContactRecord {
+  const metadata =
+    typeof overrides.metadata === "object" && overrides.metadata
+      ? overrides.metadata
+      : {};
+
+  return {
+    id: "contact_123",
+    waId: "15551234567",
+    profileName: "John Profile",
+    displayName: "John Doe",
+    whatsappUserId: "15551234567",
+    customerId: null,
+    ...overrides,
+    metadata,
+  };
+}
+
+export function createUnifiedTextMessage(
+  overrides: Partial<UnifiedMessage> = {},
+): UnifiedMessage {
+  return {
+    id: "wamid.history.1",
+    timestamp: "1730092800",
+    type: "text",
+    from: "15551234567",
+    to: "123456789",
+    ...overrides,
+    text: {
+      body: "Hello from history",
+      ...(overrides.text ?? {}),
+    },
+    kapso: {
+      direction: "inbound",
+      status: "delivered",
+      processingStatus: "completed",
+      phoneNumber: "+15551234567",
+      hasMedia: false,
+      whatsappConversationId: "conv_123",
+      contactName: "John Doe",
+      content: {
+        text: "Hello from history",
+      },
+      ...(overrides.kapso ?? {}),
+    },
+  };
+}
+
+export function createMessageListResponse(
+  messages: UnifiedMessage[],
+  cursors?: {
+    after?: string | null;
+    before?: string | null;
+  },
+): MessageListResponse {
+  return {
+    data: messages,
+    paging: {
+      cursors: {
+        after: cursors?.after,
+        before: cursors?.before,
+      },
+    },
+  };
+}
+
+export function createNotFoundGraphApiError(
+  message = "Kapso record not found",
+): GraphApiError {
+  return new GraphApiError({
+    httpStatus: 404,
+    category: "unknown",
+    retry: {
+      action: "do_not_retry",
+    },
+    raw: {
+      message,
+    },
+    message,
+    type: "NotFound",
+    code: 0,
+  });
 }
 
 export function createWebhookSignature(body: string): string {

@@ -2,8 +2,14 @@ import { ValidationError } from "@chat-adapter/shared";
 import { Card, getEmoji, NotImplementedError, type ChatInstance } from "chat";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  createContactRecord,
+  createConversationListResponse,
+  createConversationRecord,
+  createMessageListResponse,
+  createNotFoundGraphApiError,
   createSendResponse,
   createTestAdapter,
+  createUnifiedTextMessage,
   getClient,
 } from "./kapso-test-helpers.js";
 
@@ -106,6 +112,14 @@ describe("KapsoAdapter", () => {
       };
 
       expect(adapter.renderFormatted(ast)).toContain("Hello world");
+    });
+  });
+
+  describe("history and thread support", () => {
+    it("enables persisted message history", () => {
+      const adapter = createTestAdapter();
+
+      expect(adapter.persistMessageHistory).toBe(true);
     });
   });
 
@@ -368,6 +382,459 @@ describe("KapsoAdapter", () => {
     });
   });
 
+  describe("fetchMessages", () => {
+    it("returns parsed messages in chronological order", async () => {
+      const adapter = createTestAdapter();
+      const conversation = createConversationRecord();
+      const contact = createContactRecord();
+      const listConversations = vi
+        .spyOn(getClient(adapter).conversations, "list")
+        .mockResolvedValue(createConversationListResponse([conversation]));
+      const getContact = vi
+        .spyOn(getClient(adapter).contacts, "get")
+        .mockResolvedValue(contact);
+      const listByConversation = vi
+        .spyOn(getClient(adapter).messages, "listByConversation")
+        .mockResolvedValue(
+          createMessageListResponse(
+            [
+              createUnifiedTextMessage({
+                id: "wamid.history.2",
+                timestamp: "1730092900",
+                text: {
+                  body: "Second from history",
+                },
+                kapso: {
+                  content: {
+                    text: "Second from history",
+                  },
+                },
+              }),
+              createUnifiedTextMessage({
+                id: "wamid.history.1",
+                timestamp: "1730092800",
+                text: {
+                  body: "First from history",
+                },
+                kapso: {
+                  content: {
+                    text: "First from history",
+                  },
+                },
+              }),
+            ],
+            {
+              after: "older-page-1",
+            },
+          ),
+        );
+
+      const result = await adapter.fetchMessages(
+        "kapso:123456789:15551234567",
+      );
+
+      expect(listConversations).toHaveBeenCalledWith({
+        phoneNumberId: "123456789",
+        phoneNumber: "+15551234567",
+        limit: 100,
+        after: undefined,
+        fields: expect.stringContaining("contact_name"),
+      });
+      expect(getContact).toHaveBeenCalledWith({
+        phoneNumberId: "123456789",
+        waId: "15551234567",
+      });
+      expect(listByConversation).toHaveBeenCalledWith({
+        phoneNumberId: "123456789",
+        conversationId: "conv_123",
+        limit: 50,
+        after: undefined,
+        fields: expect.any(String),
+      });
+      expect(result.messages.map((message) => message.text)).toEqual([
+        "First from history",
+        "Second from history",
+      ]);
+      expect(result.messages[0]?.raw).toMatchObject({
+        phoneNumberId: "123456789",
+        userWaId: "15551234567",
+        contactName: "John Doe",
+        message: {
+          id: "wamid.history.1",
+          text: {
+            body: "First from history",
+          },
+        },
+      });
+      expect(result.nextCursor).toBe("older-page-1");
+    });
+
+    it("continues when contact enrichment fails", async () => {
+      const adapter = createTestAdapter();
+      const conversation = createConversationRecord({
+        kapso: {
+          contactName: "Conversation Contact",
+        },
+      });
+
+      vi.spyOn(getClient(adapter).conversations, "list").mockResolvedValue(
+        createConversationListResponse([conversation]),
+      );
+      vi.spyOn(getClient(adapter).contacts, "get").mockRejectedValue(
+        new Error("Kapso contacts unavailable"),
+      );
+      vi.spyOn(getClient(adapter).messages, "listByConversation").mockResolvedValue(
+        createMessageListResponse([
+          createUnifiedTextMessage({
+            text: {
+              body: "History without contact",
+            },
+            kapso: {
+              contactName: undefined,
+              content: {
+                text: "History without contact",
+              },
+            },
+          }),
+        ]),
+      );
+
+      const result = await adapter.fetchMessages(
+        "kapso:123456789:15551234567",
+      );
+
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0]?.text).toBe("History without contact");
+      expect(result.messages[0]?.author.fullName).toBe("Conversation Contact");
+      expect(result.messages[0]?.raw).toMatchObject({
+        contactName: "Conversation Contact",
+      });
+    });
+
+    it("maps backward pagination cursors to Kapso after cursors", async () => {
+      const adapter = createTestAdapter();
+      const conversation = createConversationRecord();
+      vi.spyOn(getClient(adapter).conversations, "list").mockResolvedValue(
+        createConversationListResponse([conversation]),
+      );
+      vi.spyOn(getClient(adapter).contacts, "get").mockRejectedValue(
+        createNotFoundGraphApiError(),
+      );
+      const listByConversation = vi
+        .spyOn(getClient(adapter).messages, "listByConversation")
+        .mockResolvedValue(
+          createMessageListResponse(
+            [
+              createUnifiedTextMessage({
+                id: "wamid.history.4",
+                timestamp: "1730093100",
+                text: {
+                  body: "Fourth from history",
+                },
+              }),
+              createUnifiedTextMessage({
+                id: "wamid.history.3",
+                timestamp: "1730093000",
+                text: {
+                  body: "Third from history",
+                },
+              }),
+            ],
+            {
+              after: "older-page-2",
+            },
+          ),
+        );
+
+      const result = await adapter.fetchMessages(
+        "kapso:123456789:15551234567",
+        {
+          cursor: "older-page-1",
+          limit: 2,
+        },
+      );
+
+      expect(listByConversation).toHaveBeenCalledWith({
+        phoneNumberId: "123456789",
+        conversationId: "conv_123",
+        limit: 2,
+        after: "older-page-1",
+        fields: expect.any(String),
+      });
+      expect(result.messages.map((message) => message.text)).toEqual([
+        "Third from history",
+        "Fourth from history",
+      ]);
+      expect(result.nextCursor).toBe("older-page-2");
+    });
+
+    it("maps forward pagination to the oldest page first", async () => {
+      const adapter = createTestAdapter();
+      const conversation = createConversationRecord();
+      vi.spyOn(getClient(adapter).conversations, "list").mockResolvedValue(
+        createConversationListResponse([conversation]),
+      );
+      vi.spyOn(getClient(adapter).contacts, "get").mockResolvedValue(
+        createContactRecord({
+          displayName: "Jane Customer",
+        }),
+      );
+      const listByConversation = vi
+        .spyOn(getClient(adapter).messages, "listByConversation")
+        .mockResolvedValueOnce(
+          createMessageListResponse(
+            [
+              createUnifiedTextMessage({
+                id: "wamid.history.4",
+                timestamp: "1730093100",
+                text: {
+                  body: "Fourth from history",
+                },
+              }),
+              createUnifiedTextMessage({
+                id: "wamid.history.3",
+                timestamp: "1730093000",
+                text: {
+                  body: "Third from history",
+                },
+              }),
+            ],
+            {
+              after: "older-page-1",
+            },
+          ),
+        )
+        .mockResolvedValueOnce(
+          createMessageListResponse(
+            [
+              createUnifiedTextMessage({
+                id: "wamid.history.2",
+                timestamp: "1730092900",
+                text: {
+                  body: "Second from history",
+                },
+              }),
+              createUnifiedTextMessage({
+                id: "wamid.history.1",
+                timestamp: "1730092800",
+                text: {
+                  body: "First from history",
+                },
+              }),
+            ],
+            {
+              before: "newer-page-1",
+            },
+          ),
+        );
+
+      const result = await adapter.fetchMessages(
+        "kapso:123456789:15551234567",
+        {
+          direction: "forward",
+          limit: 2,
+        },
+      );
+
+      expect(listByConversation).toHaveBeenNthCalledWith(1, {
+        phoneNumberId: "123456789",
+        conversationId: "conv_123",
+        limit: 2,
+        fields: expect.any(String),
+      });
+      expect(listByConversation).toHaveBeenNthCalledWith(2, {
+        phoneNumberId: "123456789",
+        conversationId: "conv_123",
+        limit: 2,
+        after: "older-page-1",
+        fields: expect.any(String),
+      });
+      expect(result.messages.map((message) => message.text)).toEqual([
+        "First from history",
+        "Second from history",
+      ]);
+      expect(result.nextCursor).toBe("newer-page-1");
+    });
+
+    it("prefers Kapso message and conversation names over contact names", async () => {
+      const adapter = createTestAdapter();
+      const conversation = createConversationRecord({
+        kapso: {
+          contactName: "Conversation Contact",
+        },
+      });
+      const contact = createContactRecord({
+        displayName: "Contact Display",
+        profileName: "Contact Profile",
+      });
+
+      vi.spyOn(getClient(adapter).conversations, "list").mockResolvedValue(
+        createConversationListResponse([conversation]),
+      );
+      vi.spyOn(getClient(adapter).contacts, "get").mockResolvedValue(contact);
+      vi.spyOn(getClient(adapter).messages, "listByConversation").mockResolvedValue(
+        createMessageListResponse([
+          createUnifiedTextMessage({
+            id: "wamid.history.1",
+            text: {
+              body: "Uses message Kapso name",
+            },
+            kapso: {
+              contactName: "Message Contact",
+              content: {
+                text: "Uses message Kapso name",
+              },
+            },
+          }),
+          createUnifiedTextMessage({
+            id: "wamid.history.2",
+            timestamp: "1730092900",
+            text: {
+              body: "Uses conversation Kapso name",
+            },
+            kapso: {
+              contactName: undefined,
+              content: {
+                text: "Uses conversation Kapso name",
+              },
+            },
+          }),
+        ]),
+      );
+
+      const result = await adapter.fetchMessages(
+        "kapso:123456789:15551234567",
+      );
+
+      expect(result.messages.map((message) => message.raw.contactName)).toEqual([
+        "Message Contact",
+        "Conversation Contact",
+      ]);
+    });
+
+    it("clamps the history fetch limit to 100", async () => {
+      const adapter = createTestAdapter();
+      const conversation = createConversationRecord();
+
+      vi.spyOn(getClient(adapter).conversations, "list").mockResolvedValue(
+        createConversationListResponse([conversation]),
+      );
+      vi.spyOn(getClient(adapter).contacts, "get").mockRejectedValue(
+        createNotFoundGraphApiError(),
+      );
+      const listByConversation = vi
+        .spyOn(getClient(adapter).messages, "listByConversation")
+        .mockResolvedValue(createMessageListResponse([]));
+
+      await adapter.fetchMessages("kapso:123456789:15551234567", {
+        limit: 250,
+      });
+
+      expect(listByConversation).toHaveBeenCalledWith({
+        phoneNumberId: "123456789",
+        conversationId: "conv_123",
+        limit: 100,
+        after: undefined,
+        fields: expect.any(String),
+      });
+    });
+  });
+
+  describe("fetchThread", () => {
+    it("returns fallback info from the thread ID when no Kapso record exists", async () => {
+      const adapter = createTestAdapter();
+      const listConversations = vi
+        .spyOn(getClient(adapter).conversations, "list")
+        .mockResolvedValueOnce(createConversationListResponse([]))
+        .mockResolvedValueOnce(createConversationListResponse([]));
+      const getContact = vi
+        .spyOn(getClient(adapter).contacts, "get")
+        .mockRejectedValue(createNotFoundGraphApiError());
+
+      const result = await adapter.fetchThread("kapso:123456789:15551234567");
+
+      expect(listConversations).toHaveBeenCalledTimes(2);
+      expect(getContact).toHaveBeenCalledWith({
+        phoneNumberId: "123456789",
+        waId: "15551234567",
+      });
+      expect(result).toEqual({
+        id: "kapso:123456789:15551234567",
+        channelId: "kapso:123456789:15551234567",
+        channelName: "WhatsApp: 15551234567",
+        isDM: true,
+        metadata: {
+          phoneNumberId: "123456789",
+          userWaId: "15551234567",
+        },
+      });
+    });
+
+    it("continues when contact enrichment fails", async () => {
+      const adapter = createTestAdapter();
+      const conversation = createConversationRecord({
+        id: "conv_555",
+        kapso: {
+          contactName: "Conversation Contact",
+        },
+      });
+
+      vi.spyOn(getClient(adapter).conversations, "list").mockResolvedValue(
+        createConversationListResponse([conversation]),
+      );
+      vi.spyOn(getClient(adapter).contacts, "get").mockRejectedValue(
+        new Error("Kapso contacts unavailable"),
+      );
+
+      const result = await adapter.fetchThread("kapso:123456789:15551234567");
+
+      expect(result.channelName).toBe("WhatsApp: Conversation Contact");
+      expect(result.metadata).toMatchObject({
+        phoneNumberId: "123456789",
+        userWaId: "15551234567",
+        contactName: "Conversation Contact",
+        conversationId: "conv_555",
+        conversation,
+      });
+      expect(result.metadata).not.toHaveProperty("contactId");
+    });
+
+    it("enriches metadata when Kapso conversation and contact data are available", async () => {
+      const adapter = createTestAdapter();
+      const conversation = createConversationRecord({
+        id: "conv_999",
+        phoneNumber: "+15551234567",
+        kapso: {
+          contactName: "Conversation Contact",
+          lastMessageText: "Latest Kapso message",
+        },
+      });
+      const contact = createContactRecord({
+        id: "contact_999",
+        displayName: "Jane Customer",
+        profileName: "Jane Profile",
+      });
+
+      vi.spyOn(getClient(adapter).conversations, "list").mockResolvedValue(
+        createConversationListResponse([conversation]),
+      );
+      vi.spyOn(getClient(adapter).contacts, "get").mockResolvedValue(contact);
+
+      const result = await adapter.fetchThread("kapso:123456789:15551234567");
+
+      expect(result.channelName).toBe("WhatsApp: Conversation Contact");
+      expect(result.metadata).toMatchObject({
+        phoneNumberId: "123456789",
+        userWaId: "15551234567",
+        contactName: "Conversation Contact",
+        contactId: "contact_999",
+        conversationId: "conv_999",
+        contact,
+        conversation,
+      });
+    });
+  });
+
   describe("unimplemented methods", () => {
     it("throws an explicit error for editMessage", async () => {
       const adapter = createTestAdapter();
@@ -387,30 +854,15 @@ describe("KapsoAdapter", () => {
       ).rejects.toThrow("Kapso/WhatsApp does not support deleting messages.");
     });
 
-    const createAsyncCalls = () => {
+    it("throws for startTyping", async () => {
       const adapter = createTestAdapter();
 
-      return [
-        {
-          name: "startTyping",
-          call: () => adapter.startTyping("kapso:123456789:15551234567"),
-        },
-        {
-          name: "fetchMessages",
-          call: () => adapter.fetchMessages("kapso:123456789:15551234567"),
-        },
-        {
-          name: "fetchThread",
-          call: () => adapter.fetchThread("kapso:123456789:15551234567"),
-        },
-      ] as const;
-    };
-
-    for (const { name, call } of createAsyncCalls()) {
-      it(`throws for ${name}`, async () => {
-        await expect(call()).rejects.toThrow(NotImplementedError);
-        await expect(call()).rejects.toThrow(name);
-      });
-    }
+      await expect(
+        adapter.startTyping("kapso:123456789:15551234567"),
+      ).rejects.toThrow(NotImplementedError);
+      await expect(
+        adapter.startTyping("kapso:123456789:15551234567"),
+      ).rejects.toThrow("startTyping");
+    });
   });
 });

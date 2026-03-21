@@ -4,7 +4,12 @@ import {
   ValidationError,
 } from "@chat-adapter/shared";
 import {
+  buildKapsoFields,
+  type ContactRecord,
+  type ConversationRecord,
+  GraphApiError,
   type SendMessageResponse,
+  type UnifiedMessage,
   WhatsAppClient,
 } from "@kapso/whatsapp-cloud-api";
 import {
@@ -32,7 +37,11 @@ import {
   resolveSenderId,
 } from "./message-parser.js";
 import { KapsoFormatConverter } from "./format-converter.js";
-import { decodeKapsoThreadId, encodeKapsoThreadId } from "./thread-utils.js";
+import {
+  decodeKapsoThreadId,
+  encodeKapsoThreadId,
+  normalizeUserWaId,
+} from "./thread-utils.js";
 import {
   buildWebhookRawMessage,
   extractWebhookEventName,
@@ -49,6 +58,26 @@ import type {
 /** Maximum message length for WhatsApp Cloud API */
 const KAPSO_MESSAGE_LIMIT = 4096;
 const MAX_PROCESSED_WEBHOOK_KEYS = 1024;
+const DEFAULT_FETCH_LIMIT = 50;
+const KAPSO_HISTORY_FETCH_LIMIT_MAX = 100;
+const KAPSO_CONVERSATION_FIELDS = buildKapsoFields([
+  "contact_name",
+  "messages_count",
+  "last_message_id",
+  "last_message_type",
+  "last_message_timestamp",
+  "last_message_text",
+  "last_inbound_at",
+  "last_outbound_at",
+]);
+const KAPSO_HISTORY_FIELDS = buildKapsoFields();
+
+type KapsoThreadContext = {
+  contact?: ContactRecord | null;
+  conversation?: ConversationRecord | null;
+  phoneNumberId: string;
+  userWaId: string;
+};
 
 /**
  * Split text into chunks that fit within WhatsApp's message limit,
@@ -92,16 +121,112 @@ function splitMessage(text: string): string[] {
   return chunks;
 }
 
+function compareConversationActivity(
+  left: ConversationRecord,
+  right: ConversationRecord,
+): number {
+  const leftIsActive = left.status === "active" ? 1 : 0;
+  const rightIsActive = right.status === "active" ? 1 : 0;
+  if (leftIsActive !== rightIsActive) {
+    return rightIsActive - leftIsActive;
+  }
+
+  const leftLastActiveAt = Date.parse(left.lastActiveAt ?? "") || 0;
+  const rightLastActiveAt = Date.parse(right.lastActiveAt ?? "") || 0;
+  if (leftLastActiveAt !== rightLastActiveAt) {
+    return rightLastActiveAt - leftLastActiveAt;
+  }
+
+  return right.id.localeCompare(left.id);
+}
+
+function compareHistoryMessages(
+  left: UnifiedMessage,
+  right: UnifiedMessage,
+): number {
+  const leftTimestamp = parseUnixTimestamp(left.timestamp).getTime();
+  const rightTimestamp = parseUnixTimestamp(right.timestamp).getTime();
+  if (leftTimestamp !== rightTimestamp) {
+    return leftTimestamp - rightTimestamp;
+  }
+
+  return left.id.localeCompare(right.id);
+}
+
+function getCursor(
+  paging: { cursors?: { after?: string | null; before?: string | null } },
+  key: "after" | "before",
+): string | undefined {
+  const value = paging.cursors?.[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return error instanceof GraphApiError && error.httpStatus === 404;
+}
+
+function normalizeConversationPhoneNumber(
+  conversation: ConversationRecord,
+): string | undefined {
+  return normalizeUserWaId(conversation.phoneNumber);
+}
+
+function resolveMessageContactName(message: UnifiedMessage): string | undefined {
+  const contactName = message.kapso?.contactName;
+  return typeof contactName === "string" && contactName.length > 0
+    ? contactName
+    : undefined;
+}
+
+function resolveConversationContactName(
+  conversation: ConversationRecord | null | undefined,
+): string | undefined {
+  const contactName = conversation?.kapso?.contactName;
+  return typeof contactName === "string" && contactName.length > 0
+    ? contactName
+    : undefined;
+}
+
+function resolveContactRecordName(
+  contact: ContactRecord | null | undefined,
+): string | undefined {
+  const displayName = contact?.displayName;
+  if (typeof displayName === "string" && displayName.length > 0) {
+    return displayName;
+  }
+
+  const profileName = contact?.profileName;
+  return typeof profileName === "string" && profileName.length > 0
+    ? profileName
+    : undefined;
+}
+
+function resolveThreadDisplayName(
+  userWaId: string,
+  context: {
+    contact?: ContactRecord | null;
+    conversation?: ConversationRecord | null;
+  },
+): string {
+  const displayName =
+    resolveConversationContactName(context.conversation) ??
+    resolveContactRecordName(context.contact);
+
+  return typeof displayName === "string" && displayName.length > 0
+    ? displayName
+    : userWaId;
+}
+
 /**
  * Kapso adapter for Chat SDK.
  *
- * Supports outbound text messages, reactions, and inbound Kapso webhook
- * handling for real-time message processing.
- *
- * History/thread APIs are implemented separately.
+ * Supports outbound text messages, reactions, inbound Kapso webhook
+ * handling, and Kapso-backed message history/thread enrichment for
+ * WhatsApp conversations.
  */
 export class KapsoAdapter implements Adapter<KapsoThreadId, KapsoRawMessage> {
   readonly name = "kapso";
+  readonly persistMessageHistory = true;
   readonly userName: string;
 
   private readonly baseUrl: string;
@@ -115,6 +240,7 @@ export class KapsoAdapter implements Adapter<KapsoThreadId, KapsoRawMessage> {
   private _botUserId: string | null = null;
   private readonly processedWebhookKeys = new Map<string, number>();
 
+  /** Bot user ID used for self-message detection. */
   get botUserId(): string | undefined {
     return this._botUserId ?? undefined;
   }
@@ -170,6 +296,12 @@ export class KapsoAdapter implements Adapter<KapsoThreadId, KapsoRawMessage> {
     return this.formatConverter.fromAst(content);
   }
 
+  /**
+   * Handle incoming Kapso webhook events.
+   *
+   * Supports POST requests for Kapso webhook mode and processes
+   * `whatsapp.message.received` events into Chat SDK messages.
+   */
   async handleWebhook(
     request: Request,
     options?: WebhookOptions,
@@ -257,6 +389,9 @@ export class KapsoAdapter implements Adapter<KapsoThreadId, KapsoRawMessage> {
     return new Response("OK", { status: 200 });
   }
 
+  /**
+   * Parse a Kapso raw message into a Chat SDK message.
+   */
   parseMessage(raw: KapsoRawMessage): Message<KapsoRawMessage> {
     const threadId = this.encodeThreadId({
       phoneNumberId: raw.phoneNumberId,
@@ -382,15 +517,102 @@ export class KapsoAdapter implements Adapter<KapsoThreadId, KapsoRawMessage> {
     this.notImplemented("startTyping");
   }
 
+  /**
+   * Fetch stored message history for a Kapso-backed WhatsApp thread.
+   */
   async fetchMessages(
-    _threadId: string,
-    _options?: FetchOptions,
+    threadId: string,
+    options: FetchOptions = {},
   ): Promise<FetchResult<KapsoRawMessage>> {
-    this.notImplemented("fetchMessages");
+    const { phoneNumberId, userWaId } = this.decodeThreadId(threadId);
+    const conversation = await this.findBestConversationForThread(
+      phoneNumberId,
+      userWaId,
+    );
+
+    if (!conversation) {
+      return { messages: [] };
+    }
+
+    const direction = options.direction ?? "backward";
+    const limit = Math.min(
+      options.limit ?? DEFAULT_FETCH_LIMIT,
+      KAPSO_HISTORY_FETCH_LIMIT_MAX,
+    );
+    const page = await this.fetchConversationHistoryPage(
+      conversation.id,
+      phoneNumberId,
+      direction,
+      limit,
+      options.cursor,
+    );
+    const contact = await this.fetchContactForThread(
+      phoneNumberId,
+      userWaId,
+      "fetchMessages",
+    );
+    const context: KapsoThreadContext = {
+      phoneNumberId,
+      userWaId,
+      conversation,
+      contact,
+    };
+    const messages = [...page.data]
+      .sort(compareHistoryMessages)
+      .map((message) => this.toKapsoRawMessage(message, context))
+      .map((raw) => this.parseMessage(raw));
+
+    return {
+      messages,
+      nextCursor:
+        direction === "backward"
+          ? getCursor(page.paging, "after")
+          : getCursor(page.paging, "before"),
+    };
   }
 
-  async fetchThread(_threadId: string): Promise<ThreadInfo> {
-    this.notImplemented("fetchThread");
+  /**
+   * Fetch thread metadata for a Kapso-backed WhatsApp conversation.
+   */
+  async fetchThread(threadId: string): Promise<ThreadInfo> {
+    const { phoneNumberId, userWaId } = this.decodeThreadId(threadId);
+    const conversation = await this.findBestConversationForThread(
+      phoneNumberId,
+      userWaId,
+    );
+    const contact = await this.fetchContactForThread(
+      phoneNumberId,
+      userWaId,
+      "fetchThread",
+    );
+    const displayName = resolveThreadDisplayName(userWaId, {
+      contact,
+      conversation,
+    });
+
+    return {
+      id: threadId,
+      channelId: this.channelIdFromThreadId(threadId),
+      channelName: `WhatsApp: ${displayName}`,
+      isDM: true,
+      metadata: {
+        phoneNumberId,
+        userWaId,
+        ...(displayName !== userWaId ? { contactName: displayName } : {}),
+        ...(contact
+          ? {
+              contactId: contact.id,
+              contact,
+            }
+          : {}),
+        ...(conversation
+          ? {
+              conversationId: conversation.id,
+              conversation,
+            }
+          : {}),
+      },
+    };
   }
 
   private assertOutboundTextOnly(message: AdapterPostableMessage): void {
@@ -471,5 +693,159 @@ export class KapsoAdapter implements Adapter<KapsoThreadId, KapsoRawMessage> {
       `Kapso adapter ${method} is not implemented.`,
       method,
     );
+  }
+
+  private async fetchConversationHistoryPage(
+    conversationId: string,
+    phoneNumberId: string,
+    direction: "forward" | "backward",
+    limit: number,
+    cursor?: string,
+  ) {
+    if (direction === "backward") {
+      return this.client.messages.listByConversation({
+        phoneNumberId,
+        conversationId,
+        limit,
+        after: cursor,
+        fields: KAPSO_HISTORY_FIELDS,
+      });
+    }
+
+    if (cursor) {
+      return this.client.messages.listByConversation({
+        phoneNumberId,
+        conversationId,
+        limit,
+        before: cursor,
+        fields: KAPSO_HISTORY_FIELDS,
+      });
+    }
+
+    // Kapso history pages newest-first. Walk to the oldest page so Chat's
+    // forward mode can start from the beginning while still using opaque
+    // Kapso cursors for subsequent pages.
+    let page = await this.client.messages.listByConversation({
+      phoneNumberId,
+      conversationId,
+      limit,
+      fields: KAPSO_HISTORY_FIELDS,
+    });
+    let nextOlderCursor = getCursor(page.paging, "after");
+
+    while (nextOlderCursor) {
+      const olderPage = await this.client.messages.listByConversation({
+        phoneNumberId,
+        conversationId,
+        limit,
+        after: nextOlderCursor,
+        fields: KAPSO_HISTORY_FIELDS,
+      });
+
+      page = olderPage;
+      nextOlderCursor = getCursor(page.paging, "after");
+    }
+
+    return page;
+  }
+
+  private async findBestConversationForThread(
+    phoneNumberId: string,
+    userWaId: string,
+  ): Promise<ConversationRecord | null> {
+    const normalizedUserWaId = normalizeUserWaId(userWaId);
+    if (!normalizedUserWaId) {
+      return null;
+    }
+
+    const phoneCandidates = [
+      userWaId.startsWith("+") ? userWaId : `+${normalizedUserWaId}`,
+      normalizedUserWaId,
+    ].filter((value, index, values) => values.indexOf(value) === index);
+
+    const matches: ConversationRecord[] = [];
+
+    for (const phoneNumber of phoneCandidates) {
+      let after: string | undefined;
+
+      do {
+        const page = await this.client.conversations.list({
+          phoneNumberId,
+          phoneNumber,
+          limit: 100,
+          after,
+          fields: KAPSO_CONVERSATION_FIELDS,
+        });
+
+        for (const conversation of page.data) {
+          if (
+            normalizeConversationPhoneNumber(conversation) === normalizedUserWaId
+          ) {
+            matches.push(conversation);
+          }
+        }
+
+        after = getCursor(page.paging, "after");
+      } while (after);
+
+      if (matches.length > 0) {
+        break;
+      }
+    }
+
+    if (matches.length === 0) {
+      return null;
+    }
+
+    matches.sort(compareConversationActivity);
+    return matches[0] ?? null;
+  }
+
+  private async fetchContactForThread(
+    phoneNumberId: string,
+    userWaId: string,
+    operation: "fetchMessages" | "fetchThread",
+  ): Promise<ContactRecord | null> {
+    const normalizedUserWaId = normalizeUserWaId(userWaId);
+    if (!normalizedUserWaId) {
+      return null;
+    }
+
+    try {
+      return await this.client.contacts.get({
+        phoneNumberId,
+        waId: normalizedUserWaId,
+      });
+    } catch (error) {
+      if (isNotFoundError(error)) {
+        return null;
+      }
+
+      this.logger.warn(
+        "Kapso contact enrichment failed; continuing without contact",
+        {
+          operation,
+          phoneNumberId,
+          userWaId: normalizedUserWaId,
+          error,
+        },
+      );
+      return null;
+    }
+  }
+
+  private toKapsoRawMessage(
+    message: UnifiedMessage,
+    context: KapsoThreadContext,
+  ): KapsoRawMessage {
+    return {
+      phoneNumberId: context.phoneNumberId,
+      userWaId: context.userWaId,
+      contactName:
+        resolveMessageContactName(message) ??
+        resolveConversationContactName(context.conversation) ??
+        resolveContactRecordName(context.contact),
+      message: message as KapsoRawMessage["message"],
+    };
   }
 }
