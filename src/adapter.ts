@@ -423,6 +423,11 @@ export class KapsoAdapter implements Adapter<KapsoThreadId, KapsoRawMessage> {
     });
   }
 
+  /**
+   * Send a plain-text message. Throws if the message contains cards, attachments,
+   * or files. Automatically splits messages over 4096 characters at paragraph or
+   * line boundaries.
+   */
   async postMessage(
     threadId: string,
     message: AdapterPostableMessage,
@@ -465,6 +470,7 @@ export class KapsoAdapter implements Adapter<KapsoThreadId, KapsoRawMessage> {
     return result;
   }
 
+  /** Not supported. Always throws — WhatsApp does not support editing sent messages. */
   async editMessage(
     _threadId: string,
     _messageId: string,
@@ -475,6 +481,7 @@ export class KapsoAdapter implements Adapter<KapsoThreadId, KapsoRawMessage> {
     );
   }
 
+  /** Not supported. Always throws — WhatsApp does not support deleting sent messages. */
   async deleteMessage(_threadId: string, _messageId: string): Promise<void> {
     throw new Error("Kapso/WhatsApp does not support deleting messages.");
   }
@@ -513,6 +520,7 @@ export class KapsoAdapter implements Adapter<KapsoThreadId, KapsoRawMessage> {
     });
   }
 
+  /** Not implemented. Always throws `NotImplementedError`. */
   async startTyping(_threadId: string, _status?: string): Promise<void> {
     this.notImplemented("startTyping");
   }
