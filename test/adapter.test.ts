@@ -1,6 +1,12 @@
 import { ValidationError } from "@chat-adapter/shared";
-import { Card, getEmoji, NotImplementedError, type ChatInstance } from "chat";
+import {
+  getEmoji,
+  NotImplementedError,
+  type CardElement,
+  type ChatInstance,
+} from "chat";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { encodeWhatsAppCallbackData } from "../src/cards.js";
 import {
   createContactRecord,
   createConversationListResponse,
@@ -262,31 +268,111 @@ describe("KapsoAdapter", () => {
       expect(sendText.mock.calls[1]?.[0]?.body).toBe("b".repeat(1500));
     });
 
-    it("rejects direct cards", async () => {
+    it("sends supported cards as interactive reply buttons", async () => {
       const adapter = createTestAdapter();
+      const sendInteractive = vi
+        .spyOn(getClient(adapter).messages, "sendInteractiveRaw")
+        .mockResolvedValue(createSendResponse("wamid.card"));
+      const card: CardElement = {
+        type: "card",
+        title: "Choose an action",
+        children: [
+          { type: "text", content: "What would you like to do?" },
+          {
+            type: "actions",
+            children: [
+              { type: "button", id: "approve", label: "Approve" },
+              { type: "button", id: "report", label: "Report bug", value: "bug" },
+            ],
+          },
+        ],
+      };
 
-      await expect(
-        adapter.postMessage(
-          "kapso:123456789:15551234567",
-          Card({ title: "Unsupported" }),
-        ),
-      ).rejects.toThrow(ValidationError);
-      await expect(
-        adapter.postMessage(
-          "kapso:123456789:15551234567",
-          Card({ title: "Unsupported" }),
-        ),
-      ).rejects.toThrow("only supports text messages");
+      const result = await adapter.postMessage(
+        "kapso:123456789:15551234567",
+        card,
+      );
+
+      expect(sendInteractive).toHaveBeenCalledOnce();
+      expect(sendInteractive).toHaveBeenCalledWith({
+        phoneNumberId: "123456789",
+        to: "15551234567",
+        interactive: {
+          type: "button",
+          header: {
+            type: "text",
+            text: "Choose an action",
+          },
+          body: {
+            text: "What would you like to do?",
+          },
+          action: {
+            buttons: [
+              {
+                type: "reply",
+                reply: {
+                  id: encodeWhatsAppCallbackData("approve"),
+                  title: "Approve",
+                },
+              },
+              {
+                type: "reply",
+                reply: {
+                  id: encodeWhatsAppCallbackData("report", "bug"),
+                  title: "Report bug",
+                },
+              },
+            ],
+          },
+        },
+      });
+      expect(result).toEqual({
+        id: "wamid.card",
+        threadId: "kapso:123456789:15551234567",
+        raw: {
+          phoneNumberId: "123456789",
+          userWaId: "15551234567",
+          message: {
+            id: "wamid.card",
+            type: "interactive",
+            timestamp: expect.any(String),
+            from: "123456789",
+            to: "15551234567",
+            interactive: expect.any(Object),
+          },
+        },
+      });
     });
 
-    it("rejects wrapped cards", async () => {
+    it("falls back to text for unsupported wrapped cards", async () => {
       const adapter = createTestAdapter();
+      const sendText = vi
+        .spyOn(getClient(adapter).messages, "sendText")
+        .mockResolvedValue(createSendResponse("wamid.fallback"));
+      const card: CardElement = {
+        type: "card",
+        title: "Links only",
+        children: [
+          {
+            type: "actions",
+            children: [
+              {
+                type: "link-button",
+                url: "https://example.com",
+                label: "Visit",
+              },
+            ],
+          },
+        ],
+      };
 
-      await expect(
-        adapter.postMessage("kapso:123456789:15551234567", {
-          card: Card({ title: "Unsupported" }),
-        }),
-      ).rejects.toThrow(ValidationError);
+      await adapter.postMessage("kapso:123456789:15551234567", { card });
+
+      expect(sendText).toHaveBeenCalledWith({
+        phoneNumberId: "123456789",
+        to: "15551234567",
+        body: "*Links only*\n\nVisit: https://example.com",
+      });
     });
 
     it("rejects attachments", async () => {

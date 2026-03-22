@@ -38,6 +38,11 @@ import {
   parseUnixTimestamp,
   resolveSenderId,
 } from "./message-parser.js";
+import {
+  cardToWhatsApp,
+  decodeWhatsAppCallbackData,
+  type KapsoInteractiveMessage,
+} from "./cards.js";
 import { KapsoFormatConverter } from "./format-converter.js";
 import {
   decodeKapsoThreadId,
@@ -53,6 +58,7 @@ import {
 } from "./webhook-handler.js";
 import type {
   KapsoAdapterConfig,
+  KapsoMessage,
   KapsoRawMessage,
   KapsoThreadId,
 } from "./types.js";
@@ -394,10 +400,36 @@ export class KapsoAdapter implements Adapter<KapsoThreadId, KapsoRawMessage> {
         continue;
       }
 
+      const action = this.extractInboundAction(raw.message);
+      if (action) {
+        this.chat.processAction(
+          {
+            adapter: this,
+            actionId: action.actionId,
+            value: action.value,
+            user: this.buildAuthor(raw),
+            messageId: raw.message.id,
+            threadId,
+            raw,
+          },
+          options,
+        );
+        continue;
+      }
+
       if (raw.message.type === "reaction") {
         this.logger.warn("Skipping Kapso reaction webhook missing target message", {
           inboundMessageId: raw.message.id,
           threadId,
+        });
+        continue;
+      }
+
+      if (raw.message.type === "interactive" || raw.message.type === "button") {
+        this.logger.warn("Skipping Kapso action webhook missing callback data", {
+          inboundMessageId: raw.message.id,
+          threadId,
+          type: raw.message.type,
         });
         continue;
       }
@@ -452,41 +484,36 @@ export class KapsoAdapter implements Adapter<KapsoThreadId, KapsoRawMessage> {
     message: AdapterPostableMessage,
   ): Promise<RawMessage<KapsoRawMessage>> {
     const { userWaId } = this.decodeThreadId(threadId);
-    this.assertOutboundTextOnly(message);
+    this.assertNoOutboundAttachmentsOrFiles(message);
+
+    const card = extractCard(message);
+    if (card) {
+      const result = cardToWhatsApp(card);
+
+      if (result.type === "interactive") {
+        const interactive = JSON.parse(
+          convertEmojiPlaceholders(
+            JSON.stringify(result.interactive),
+            "whatsapp",
+          ),
+        ) as KapsoInteractiveMessage;
+
+        return this.sendInteractiveMessage(threadId, userWaId, interactive);
+      }
+
+      return this.sendTextMessage(
+        threadId,
+        userWaId,
+        convertEmojiPlaceholders(result.text, "whatsapp"),
+      );
+    }
 
     const body = convertEmojiPlaceholders(
       this.formatConverter.renderPostable(message),
       "whatsapp",
     );
 
-    if (body.trim().length === 0) {
-      throw new ValidationError(
-        "kapso",
-        "Kapso adapter requires a non-empty text message.",
-      );
-    }
-
-    const chunks = splitMessage(body);
-    let result: RawMessage<KapsoRawMessage> | null = null;
-
-    for (const chunk of chunks) {
-      const response = await this.client.messages.sendText({
-        phoneNumberId: this.phoneNumberId,
-        to: userWaId,
-        body: chunk,
-      });
-
-      result = this.buildRawTextMessage(threadId, userWaId, chunk, response);
-    }
-
-    if (!result) {
-      throw new ValidationError(
-        "kapso",
-        "Kapso adapter requires a non-empty text message.",
-      );
-    }
-
-    return result;
+    return this.sendTextMessage(threadId, userWaId, body);
   }
 
   /** Not supported. Always throws — WhatsApp does not support editing sent messages. */
@@ -642,7 +669,9 @@ export class KapsoAdapter implements Adapter<KapsoThreadId, KapsoRawMessage> {
     };
   }
 
-  private assertOutboundTextOnly(message: AdapterPostableMessage): void {
+  private assertNoOutboundAttachmentsOrFiles(
+    message: AdapterPostableMessage,
+  ): void {
     const hasAttachments =
       typeof message === "object" &&
       message !== null &&
@@ -651,12 +680,103 @@ export class KapsoAdapter implements Adapter<KapsoThreadId, KapsoRawMessage> {
       message.attachments.length > 0;
     const hasFiles = extractFiles(message).length > 0;
 
-    if (extractCard(message) || hasAttachments || hasFiles) {
+    if (hasAttachments || hasFiles) {
       throw new ValidationError(
         "kapso",
-        "Kapso adapter only supports text messages. Cards, attachments, and files are not supported.",
+        "Kapso adapter does not support attachments or files.",
       );
     }
+  }
+
+  private extractInboundAction(message: KapsoMessage): {
+    actionId: string;
+    value: string | undefined;
+  } | null {
+    const interactive = message.interactive;
+
+    if (interactive && typeof interactive === "object") {
+      const type = "type" in interactive ? interactive.type : undefined;
+
+      if (
+        type === "button_reply" &&
+        "button_reply" in interactive &&
+        interactive.button_reply &&
+        typeof interactive.button_reply === "object" &&
+        "id" in interactive.button_reply &&
+        typeof interactive.button_reply.id === "string"
+      ) {
+        return decodeWhatsAppCallbackData(interactive.button_reply.id);
+      }
+
+      if (
+        type === "list_reply" &&
+        "list_reply" in interactive &&
+        interactive.list_reply &&
+        typeof interactive.list_reply === "object" &&
+        "id" in interactive.list_reply &&
+        typeof interactive.list_reply.id === "string"
+      ) {
+        return decodeWhatsAppCallbackData(interactive.list_reply.id);
+      }
+    }
+
+    if (message.button) {
+      return {
+        actionId: message.button.payload,
+        value: message.button.text,
+      };
+    }
+
+    return null;
+  }
+
+  private async sendTextMessage(
+    threadId: string,
+    to: string,
+    body: string,
+  ): Promise<RawMessage<KapsoRawMessage>> {
+    if (body.trim().length === 0) {
+      throw new ValidationError(
+        "kapso",
+        "Kapso adapter requires a non-empty text message.",
+      );
+    }
+
+    const chunks = splitMessage(body);
+    let result: RawMessage<KapsoRawMessage> | null = null;
+
+    for (const chunk of chunks) {
+      const response = await this.client.messages.sendText({
+        phoneNumberId: this.phoneNumberId,
+        to,
+        body: chunk,
+      });
+
+      result = this.buildRawTextMessage(threadId, to, chunk, response);
+    }
+
+    if (!result) {
+      throw new ValidationError(
+        "kapso",
+        "Kapso adapter requires a non-empty text message.",
+      );
+    }
+
+    return result;
+  }
+
+  private async sendInteractiveMessage(
+    threadId: string,
+    to: string,
+    interactive: KapsoInteractiveMessage,
+  ): Promise<RawMessage<KapsoRawMessage>> {
+    const response = await this.client.messages.sendInteractiveRaw({
+      phoneNumberId: this.phoneNumberId,
+      to,
+      interactive: interactive as unknown as Record<string, unknown>,
+    });
+
+    return this.buildRawInteractiveMessage(threadId, to, interactive, response);
   }
 
   private buildRawTextMessage(
@@ -682,6 +802,32 @@ export class KapsoAdapter implements Adapter<KapsoThreadId, KapsoRawMessage> {
           text: {
             body,
           },
+        },
+      },
+    };
+  }
+
+  private buildRawInteractiveMessage(
+    threadId: string,
+    to: string,
+    interactive: KapsoInteractiveMessage,
+    response: SendMessageResponse,
+  ): RawMessage<KapsoRawMessage> {
+    const id = this.getResponseMessageId(response, "interactive message");
+
+    return {
+      id,
+      threadId,
+      raw: {
+        phoneNumberId: this.phoneNumberId,
+        userWaId: to,
+        message: {
+          id,
+          type: "interactive",
+          timestamp: String(Math.floor(Date.now() / 1000)),
+          from: this.phoneNumberId,
+          to,
+          interactive: interactive as unknown as Record<string, unknown>,
         },
       },
     };

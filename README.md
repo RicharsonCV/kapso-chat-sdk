@@ -136,25 +136,27 @@ Relevant Kapso docs:
 
 ### Messaging
 
-| Feature                       | Supported | Notes                                                                                                                                                   |
-| ----------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Outbound text messages        | Yes       | `postMessage()` sends plain text through Kapso and automatically splits messages over 4096 characters at paragraph or line boundaries when possible.    |
-| Reactions                     | Yes       | `addReaction()` and `removeReaction()` send WhatsApp reactions through Kapso. Removing a reaction sends an empty emoji string.                          |
-| Message edit                  | No        | Platform limitation. `editMessage()` throws because this integration does not support editing previously sent messages.                                 |
-| Message delete                | No        | Platform limitation. `deleteMessage()` throws because this integration does not support deleting previously sent messages.                              |
-| Richer outbound message types | No        | Adapter limitation. Cards, attachments, files, media sends, templates, and other richer outbound message types are not implemented in this adapter yet. |
-| Typing indicator              | No        | Adapter limitation. `startTyping()` is not implemented in this adapter yet.                                                                             |
+| Feature | Supported | Notes |
+| ------- | --------- | ----- |
+| Outbound text messages | Yes | `postMessage()` sends plain text through Kapso and automatically splits messages over 4096 characters at paragraph or line boundaries when possible. |
+| Outbound cards | Limited | Cards with up to 3 action buttons are sent as WhatsApp interactive reply buttons. Button titles are truncated to 20 characters, and unsupported cards fall back to text. |
+| Reactions | Yes | `addReaction()` and `removeReaction()` send WhatsApp reactions through Kapso. Removing a reaction sends an empty emoji string. |
+| Message edit | No | Platform limitation. `editMessage()` throws because this integration does not support editing previously sent messages. |
+| Message delete | No | Platform limitation. `deleteMessage()` throws because this integration does not support deleting previously sent messages. |
+| Attachments, files, and other richer outbound message types | No | Adapter limitation. Attachments, files, media sends, templates, and other richer outbound message types are not implemented in this adapter yet. |
+| Typing indicator | No | Adapter limitation. `startTyping()` is not implemented in this adapter yet. |
 
 ### Inbound webhooks
 
-| Feature                              | Supported | Notes                                                                                                                                      |
-| ------------------------------------ | --------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `whatsapp.message.received` handling | Yes       | `handleWebhook()` verifies `X-Webhook-Signature`, accepts POST requests only, and processes Kapso webhook payloads into Chat SDK messages. |
-| Buffered Kapso deliveries            | Yes       | Batched deliveries with `batch: true` and `X-Webhook-Batch: true` are expanded and processed one message at a time.                        |
-| Inbound text messages                | Yes       | Text bodies are surfaced as Chat SDK message text.                                                                                         |
-| Inbound media messages               | Yes       | Supported Kapso media payloads are converted into Chat SDK attachments plus readable fallback text.                                        |
-| Inbound reaction messages            | Yes       | Live webhook reactions call `chat.processReaction(...)`, so `bot.onReaction(...)` fires. Empty `reaction.emoji` values are treated as reaction removal. |
-| Other Kapso webhook events           | Ignored   | The adapter acknowledges unsupported event types with `200 OK`, but only `whatsapp.message.received` is processed.                         |
+| Feature | Supported | Notes |
+| ------- | --------- | ----- |
+| `whatsapp.message.received` handling | Yes | `handleWebhook()` verifies `X-Webhook-Signature`, accepts POST requests only, and processes Kapso webhook payloads into Chat SDK messages. |
+| Buffered Kapso deliveries | Yes | Batched deliveries with `batch: true` and `X-Webhook-Batch: true` are expanded and processed one message at a time. |
+| Inbound text messages | Yes | Text bodies are surfaced as Chat SDK message text. |
+| Inbound media messages | Yes | Supported Kapso media payloads are converted into Chat SDK attachments plus readable fallback text. |
+| Inbound reaction messages | Yes | Live webhook reactions call `chat.processReaction(...)`, so `bot.onReaction(...)` fires. Empty `reaction.emoji` values are treated as reaction removal. |
+| Inbound interactive replies and button callbacks | Yes | Live interactive replies call `chat.processAction(...)`, so `bot.onAction(...)` fires instead of treating the reply as a plain message. |
+| Other Kapso webhook events | Ignored | The adapter acknowledges unsupported event types with `200 OK`, but only `whatsapp.message.received` is processed. |
 
 ### History and thread info
 
@@ -203,10 +205,11 @@ kapso:123456789:15551234567
 - If no Kapso conversation is found, `fetchMessages()` returns an empty list.
 - If no Kapso contact or conversation is found, `fetchThread()` falls back to the decoded thread ID and user WA ID.
 
-### `postMessage()` rejects cards, attachments, or files
+### Card or rich message behavior
 
-- This adapter currently sends text only.
-- If you need richer outbound WhatsApp messages today, use `@kapso/whatsapp-cloud-api` directly alongside Chat SDK until richer outbound sends are added here.
+- Supported cards are sent as WhatsApp reply buttons when they fit the platform limits.
+- Unsupported cards fall back to readable text automatically.
+- Attachments, files, and other richer outbound message types still reject. If you need them today, use `@kapso/whatsapp-cloud-api` directly alongside Chat SDK.
 
 ## License
 

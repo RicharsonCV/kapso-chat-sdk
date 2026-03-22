@@ -10,6 +10,7 @@ import type {
 import { GraphApiError } from "@kapso/whatsapp-cloud-api";
 import type { ChatInstance } from "chat";
 import { KapsoAdapter } from "../src/adapter.js";
+import { encodeWhatsAppCallbackData } from "../src/cards.js";
 import type {
   KapsoRawMessage,
   KapsoWebhookMessageReceivedEvent,
@@ -291,6 +292,124 @@ export function createReceivedReactionWebhookEvent(
       reaction: {
         message_id: "wamid.original",
         emoji: "👍",
+      },
+      kapso: {
+        direction: "inbound",
+        status: "received",
+        processing_status: "pending",
+        origin: "cloud_api",
+        has_media: false,
+      },
+    },
+    conversation: {
+      id: "conv_123",
+      phone_number: "+1 (555) 123-4567",
+      status: "active",
+      metadata: {},
+      phone_number_id: "123456789",
+      kapso: {
+        contact_name: "John Doe",
+      },
+    },
+    is_new_conversation: false,
+    phone_number_id: "123456789",
+    ...overrides,
+  };
+}
+
+export function createReceivedInteractiveButtonReplyWebhookEvent(
+  overrides?: Partial<KapsoWebhookMessageReceivedEvent>,
+): KapsoWebhookMessageReceivedEvent {
+  return {
+    message: {
+      id: "wamid.interactive",
+      from: "15551234567",
+      timestamp: "1730092803",
+      type: "interactive",
+      interactive: {
+        type: "button_reply",
+        button_reply: {
+          id: encodeWhatsAppCallbackData("report", "bug"),
+          title: "Report bug",
+        },
+      },
+      kapso: {
+        direction: "inbound",
+        status: "received",
+        processing_status: "pending",
+        origin: "cloud_api",
+        has_media: false,
+      },
+    },
+    conversation: {
+      id: "conv_123",
+      phone_number: "+1 (555) 123-4567",
+      status: "active",
+      metadata: {},
+      phone_number_id: "123456789",
+      kapso: {
+        contact_name: "John Doe",
+      },
+    },
+    is_new_conversation: false,
+    phone_number_id: "123456789",
+    ...overrides,
+  };
+}
+
+export function createReceivedInteractiveListReplyWebhookEvent(
+  overrides?: Partial<KapsoWebhookMessageReceivedEvent>,
+): KapsoWebhookMessageReceivedEvent {
+  return {
+    message: {
+      id: "wamid.list",
+      from: "15551234567",
+      timestamp: "1730092804",
+      type: "interactive",
+      interactive: {
+        type: "list_reply",
+        list_reply: {
+          id: "priority_high",
+          title: "High",
+          description: "Urgent",
+        },
+      },
+      kapso: {
+        direction: "inbound",
+        status: "received",
+        processing_status: "pending",
+        origin: "cloud_api",
+        has_media: false,
+      },
+    },
+    conversation: {
+      id: "conv_123",
+      phone_number: "+1 (555) 123-4567",
+      status: "active",
+      metadata: {},
+      phone_number_id: "123456789",
+      kapso: {
+        contact_name: "John Doe",
+      },
+    },
+    is_new_conversation: false,
+    phone_number_id: "123456789",
+    ...overrides,
+  };
+}
+
+export function createReceivedButtonWebhookEvent(
+  overrides?: Partial<KapsoWebhookMessageReceivedEvent>,
+): KapsoWebhookMessageReceivedEvent {
+  return {
+    message: {
+      id: "wamid.button",
+      from: "15551234567",
+      timestamp: "1730092805",
+      type: "button",
+      button: {
+        payload: "approve",
+        text: "Approve",
       },
       kapso: {
         direction: "inbound",

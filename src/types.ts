@@ -69,6 +69,30 @@ export type KapsoReaction = NonNullable<UnifiedMessage["reaction"]> & {
   message_id?: string;
 };
 
+export interface KapsoInteractiveButtonReply {
+  id: string;
+  title: string;
+}
+
+export interface KapsoInteractiveListReply extends KapsoInteractiveButtonReply {
+  description?: string;
+}
+
+export interface KapsoInteractiveReply {
+  type: "button_reply" | "list_reply";
+  button_reply?: KapsoInteractiveButtonReply;
+  list_reply?: KapsoInteractiveListReply;
+}
+
+export type KapsoInteractivePayload =
+  | KapsoInteractiveReply
+  | Record<string, unknown>;
+
+export interface KapsoLegacyButtonReply {
+  payload: string;
+  text: string;
+}
+
 /**
  * Kapso webhook extensions for a WhatsApp message.
  *
@@ -159,7 +183,6 @@ export type KapsoMessage = Pick<
   | "from"
   | "id"
   | "image"
-  | "interactive"
   | "location"
   | "order"
   | "sticker"
@@ -170,6 +193,8 @@ export type KapsoMessage = Pick<
   | "type"
   | "video"
 > & {
+  button?: KapsoLegacyButtonReply;
+  interactive?: KapsoInteractivePayload;
   reaction?: KapsoReaction;
   kapso?: KapsoMessageExtensions;
   [key: string]: unknown;

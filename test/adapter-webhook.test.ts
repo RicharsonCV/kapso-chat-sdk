@@ -3,9 +3,12 @@ import { getEmoji } from "chat";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { KapsoAdapter } from "../src/adapter.js";
 import {
+  createReceivedButtonWebhookEvent,
   createImageRawMessage,
   createKapsoWebhookRequest,
   createLogger,
+  createReceivedInteractiveButtonReplyWebhookEvent,
+  createReceivedInteractiveListReplyWebhookEvent,
   createReceivedReactionWebhookEvent,
   createReceivedTextWebhookEvent,
   createTestAdapter,
@@ -20,17 +23,19 @@ async function initializeAdapterForWebhooks(adapter = createTestAdapter()) {
     info: vi.fn(),
     warn: vi.fn(),
   };
+  const processAction = vi.fn();
   const processMessage = vi.fn();
   const processReaction = vi.fn();
   const chat = {
     getLogger: () => logger,
+    processAction,
     processMessage,
     processReaction,
   } as unknown as ChatInstance;
 
   await adapter.initialize(chat);
 
-  return { adapter, logger, processMessage, processReaction };
+  return { adapter, logger, processAction, processMessage, processReaction };
 }
 
 describe("KapsoAdapter webhook integration", () => {
@@ -223,6 +228,97 @@ describe("KapsoAdapter webhook integration", () => {
         },
         options,
       );
+    });
+
+    it("emits interactive button replies via processAction", async () => {
+      const { adapter, processAction, processMessage } =
+        await initializeAdapterForWebhooks();
+      const options = { waitUntil: vi.fn() };
+
+      const response = await adapter.handleWebhook(
+        createKapsoWebhookRequest(
+          createReceivedInteractiveButtonReplyWebhookEvent(),
+          {
+            headers: {
+              "x-webhook-event": "whatsapp.message.received",
+            },
+          },
+        ),
+        options,
+      );
+
+      expect(response.status).toBe(200);
+      expect(processMessage).not.toHaveBeenCalled();
+      expect(processAction).toHaveBeenCalledOnce();
+      expect(processAction).toHaveBeenCalledWith(
+        {
+          adapter,
+          actionId: "report",
+          value: "bug",
+          user: {
+            userId: "15551234567",
+            userName: "John Doe",
+            fullName: "John Doe",
+            isBot: false,
+            isMe: false,
+          },
+          messageId: "wamid.interactive",
+          threadId: "kapso:123456789:15551234567",
+          raw: {
+            phoneNumberId: "123456789",
+            userWaId: "15551234567",
+            contactName: "John Doe",
+            message: createReceivedInteractiveButtonReplyWebhookEvent().message,
+          },
+        },
+        options,
+      );
+    });
+
+    it("emits interactive list replies via processAction", async () => {
+      const { adapter, processAction, processMessage } =
+        await initializeAdapterForWebhooks();
+
+      const response = await adapter.handleWebhook(
+        createKapsoWebhookRequest(createReceivedInteractiveListReplyWebhookEvent(), {
+          headers: {
+            "x-webhook-event": "whatsapp.message.received",
+          },
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(processMessage).not.toHaveBeenCalled();
+      expect(processAction).toHaveBeenCalledOnce();
+      expect(processAction.mock.calls[0]?.[0]).toMatchObject({
+        actionId: "priority_high",
+        value: "priority_high",
+        messageId: "wamid.list",
+        threadId: "kapso:123456789:15551234567",
+      });
+    });
+
+    it("emits legacy button replies via processAction", async () => {
+      const { adapter, processAction, processMessage } =
+        await initializeAdapterForWebhooks();
+
+      const response = await adapter.handleWebhook(
+        createKapsoWebhookRequest(createReceivedButtonWebhookEvent(), {
+          headers: {
+            "x-webhook-event": "whatsapp.message.received",
+          },
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(processMessage).not.toHaveBeenCalled();
+      expect(processAction).toHaveBeenCalledOnce();
+      expect(processAction.mock.calls[0]?.[0]).toMatchObject({
+        actionId: "approve",
+        value: "Approve",
+        messageId: "wamid.button",
+        threadId: "kapso:123456789:15551234567",
+      });
     });
 
     it("processes buffered whatsapp.message.received webhook payloads", async () => {
