@@ -471,7 +471,9 @@ export class KapsoAdapter implements Adapter<KapsoThreadId, KapsoRawMessage> {
         dateSent: parseUnixTimestamp(raw.message.timestamp),
         edited: false,
       },
-      attachments: buildAttachments(raw.message),
+      attachments: buildAttachments(raw, (mediaId, phoneNumberId) =>
+        this.downloadMediaAttachment(mediaId, phoneNumberId),
+      ),
     });
   }
 
@@ -812,6 +814,33 @@ export class KapsoAdapter implements Adapter<KapsoThreadId, KapsoRawMessage> {
     });
 
     return this.buildRawInteractiveMessage(threadId, to, interactive, response);
+  }
+
+  private async downloadMediaAttachment(
+    mediaId: string,
+    phoneNumberId: string,
+  ): Promise<Buffer> {
+    const data = await this.client.media.download({
+      mediaId,
+      phoneNumberId,
+      as: "arrayBuffer",
+    });
+
+    if (data instanceof ArrayBuffer) {
+      return Buffer.from(data);
+    }
+
+    if (typeof Blob !== "undefined" && data instanceof Blob) {
+      return Buffer.from(await data.arrayBuffer());
+    }
+
+    if (typeof Response !== "undefined" && data instanceof Response) {
+      return Buffer.from(await data.arrayBuffer());
+    }
+
+    throw new TypeError(
+      "Kapso media download returned an unexpected payload type.",
+    );
   }
 
   private buildRawTextMessage(

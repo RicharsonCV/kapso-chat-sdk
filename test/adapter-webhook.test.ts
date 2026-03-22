@@ -11,6 +11,7 @@ import {
   createReceivedInteractiveListReplyWebhookEvent,
   createReceivedReactionWebhookEvent,
   createReceivedTextWebhookEvent,
+  getClient,
   createTestAdapter,
   createTextRawMessage,
 } from "./kapso-test-helpers.js";
@@ -434,15 +435,47 @@ describe("KapsoAdapter webhook integration", () => {
 
       expect(message.text).toBe("[Image: photo.jpg]");
       expect(message.author.userId).toBe("15551234567");
-      expect(message.attachments).toEqual([
-        {
-          type: "image",
-          url: "https://api.kapso.ai/media/photo.jpg",
-          mimeType: "image/jpeg",
-          name: "photo.jpg",
-          size: 204800,
-        },
-      ]);
+      expect(message.attachments).toHaveLength(1);
+      expect(message.attachments[0]).toMatchObject({
+        type: "image",
+        url: "https://api.kapso.ai/media/photo.jpg",
+        mimeType: "image/jpeg",
+        name: "photo.jpg",
+        size: 204800,
+      });
+      expect(typeof message.attachments[0]?.fetchData).toBe("function");
+    });
+
+    it("downloads inbound attachment bytes through the Kapso media API", async () => {
+      const adapter = createTestAdapter();
+      const mediaDownload = vi
+        .spyOn(getClient(adapter).media, "download")
+        .mockResolvedValue(new TextEncoder().encode("image-bytes").buffer);
+      const message = adapter.parseMessage(createImageRawMessage());
+      const attachment = message.attachments[0];
+
+      await expect(attachment?.fetchData?.()).resolves.toEqual(
+        Buffer.from("image-bytes"),
+      );
+      expect(mediaDownload).toHaveBeenCalledWith({
+        mediaId: "media_123",
+        phoneNumberId: "123456789",
+        as: "arrayBuffer",
+      });
+    });
+
+    it("surfaces download errors when inbound attachment fetchData fails", async () => {
+      const adapter = createTestAdapter();
+      const mediaDownload = vi
+        .spyOn(getClient(adapter).media, "download")
+        .mockRejectedValue(new Error("Kapso media download failed"));
+      const message = adapter.parseMessage(createImageRawMessage());
+      const attachment = message.attachments[0];
+
+      await expect(attachment?.fetchData?.()).rejects.toThrow(
+        "Kapso media download failed",
+      );
+      expect(mediaDownload).toHaveBeenCalledOnce();
     });
   });
 });

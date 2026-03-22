@@ -488,3 +488,128 @@ export function createImageRawMessage(): KapsoRawMessage {
     },
   };
 }
+
+export function createDocumentRawMessage(): KapsoRawMessage {
+  return {
+    phoneNumberId: "123456789",
+    userWaId: "15551234567",
+    contactName: "Jane Doe",
+    message: {
+      id: "wamid.document",
+      from: "15551234567",
+      timestamp: "1730093100",
+      type: "document",
+      document: {
+        id: "media_doc_123",
+        filename: "invoice.pdf",
+      },
+      kapso: {
+        direction: "inbound",
+        status: "received",
+        processing_status: "pending",
+        origin: "cloud_api",
+        has_media: true,
+        media_url: "https://api.kapso.ai/media/invoice.pdf",
+        media_data: {
+          url: "https://api.kapso.ai/media/invoice.pdf",
+          filename: "invoice.pdf",
+          content_type: "application/pdf",
+          byte_size: 1024,
+        },
+      },
+    },
+  };
+}
+
+export function createAudioRawMessage(): KapsoRawMessage {
+  return {
+    phoneNumberId: "123456789",
+    userWaId: "15551234567",
+    contactName: "Jane Doe",
+    message: {
+      id: "wamid.audio",
+      from: "15551234567",
+      timestamp: "1730093200",
+      type: "audio",
+      audio: {
+        id: "media_audio_123",
+      },
+      kapso: {
+        direction: "inbound",
+        status: "received",
+        processing_status: "pending",
+        origin: "cloud_api",
+        has_media: true,
+        media_url: "https://api.kapso.ai/media/audio.ogg",
+        media_data: {
+          url: "https://api.kapso.ai/media/audio.ogg",
+          filename: "audio.ogg",
+          content_type: "audio/ogg",
+          byte_size: 5120,
+        },
+      },
+    },
+  };
+}
+
+export function createVideoRawMessage(): KapsoRawMessage {
+  return {
+    phoneNumberId: "123456789",
+    userWaId: "15551234567",
+    contactName: "Jane Doe",
+    message: {
+      id: "wamid.video",
+      from: "15551234567",
+      timestamp: "1730093300",
+      type: "video",
+      video: {
+        id: "media_video_123",
+      },
+      kapso: {
+        direction: "inbound",
+        status: "received",
+        processing_status: "pending",
+        origin: "cloud_api",
+        has_media: true,
+        media_url: "https://api.kapso.ai/media/video.mp4",
+        media_data: {
+          url: "https://api.kapso.ai/media/video.mp4",
+          filename: "video.mp4",
+          content_type: "video/mp4",
+          byte_size: 4096,
+        },
+      },
+    },
+  };
+}
+
+export function createStickerRawMessage(): KapsoRawMessage {
+  return {
+    phoneNumberId: "123456789",
+    userWaId: "15551234567",
+    contactName: "Jane Doe",
+    message: {
+      id: "wamid.sticker",
+      from: "15551234567",
+      timestamp: "1730093400",
+      type: "sticker",
+      sticker: {
+        id: "media_sticker_123",
+      },
+      kapso: {
+        direction: "inbound",
+        status: "received",
+        processing_status: "pending",
+        origin: "cloud_api",
+        has_media: true,
+        media_url: "https://api.kapso.ai/media/sticker.webp",
+        media_data: {
+          url: "https://api.kapso.ai/media/sticker.webp",
+          filename: "sticker.webp",
+          content_type: "image/webp",
+          byte_size: 2048,
+        },
+      },
+    },
+  };
+}

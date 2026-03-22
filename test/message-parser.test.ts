@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildAttachments,
   extractReactionEvent,
@@ -8,8 +8,12 @@ import {
 } from "../src/message-parser.js";
 import type { KapsoMessage, KapsoRawMessage } from "../src/types.js";
 import {
+  createAudioRawMessage,
+  createDocumentRawMessage,
   createImageRawMessage,
+  createStickerRawMessage,
   createTextRawMessage,
+  createVideoRawMessage,
 } from "./kapso-test-helpers.js";
 
 describe("message-parser", () => {
@@ -159,61 +163,120 @@ describe("message-parser", () => {
   });
 
   describe("buildAttachments", () => {
-    it("builds image attachments from Kapso media URLs", () => {
-      expect(buildAttachments(createImageRawMessage().message)).toEqual([
-        {
+    it.each([
+      {
+        label: "image",
+        raw: createImageRawMessage(),
+        mediaId: "media_123",
+        expected: {
           type: "image",
           url: "https://api.kapso.ai/media/photo.jpg",
           mimeType: "image/jpeg",
           name: "photo.jpg",
           size: 204800,
         },
-      ]);
-    });
-
-    it("builds document attachments", () => {
-      const message: KapsoMessage = {
-        id: "wamid.document",
-        timestamp: "1730092800",
-        type: "document",
-        document: {
-          filename: "invoice.pdf",
-        },
-        kapso: {
-          media_url: "https://api.kapso.ai/media/invoice.pdf",
-          media_data: {
-            url: "https://api.kapso.ai/media/invoice.pdf",
-            filename: "invoice.pdf",
-            content_type: "application/pdf",
-            byte_size: 1024,
-          },
-        },
-      };
-
-      expect(buildAttachments(message)).toEqual([
-        {
+      },
+      {
+        label: "document",
+        raw: createDocumentRawMessage(),
+        mediaId: "media_doc_123",
+        expected: {
           type: "file",
           url: "https://api.kapso.ai/media/invoice.pdf",
           mimeType: "application/pdf",
           name: "invoice.pdf",
           size: 1024,
         },
-      ]);
+      },
+      {
+        label: "audio",
+        raw: createAudioRawMessage(),
+        mediaId: "media_audio_123",
+        expected: {
+          type: "audio",
+          url: "https://api.kapso.ai/media/audio.ogg",
+          mimeType: "audio/ogg",
+          name: "audio.ogg",
+          size: 5120,
+        },
+      },
+      {
+        label: "video",
+        raw: createVideoRawMessage(),
+        mediaId: "media_video_123",
+        expected: {
+          type: "video",
+          url: "https://api.kapso.ai/media/video.mp4",
+          mimeType: "video/mp4",
+          name: "video.mp4",
+          size: 4096,
+        },
+      },
+      {
+        label: "sticker",
+        raw: createStickerRawMessage(),
+        mediaId: "media_sticker_123",
+        expected: {
+          type: "image",
+          url: "https://api.kapso.ai/media/sticker.webp",
+          mimeType: "image/webp",
+          name: "sticker.webp",
+          size: 2048,
+        },
+      },
+    ])(
+      "builds $label attachments with lazy downloads when media IDs are present",
+      async ({ raw, mediaId, expected }) => {
+        const downloadMedia = vi
+          .fn<(mediaId: string, phoneNumberId: string) => Promise<Buffer>>()
+          .mockResolvedValue(Buffer.from("downloaded"));
+
+        const [attachment] = buildAttachments(raw, downloadMedia);
+
+        expect(attachment).toMatchObject(expected);
+        expect(typeof attachment?.fetchData).toBe("function");
+        await expect(attachment?.fetchData?.()).resolves.toEqual(
+          Buffer.from("downloaded"),
+        );
+        expect(downloadMedia).toHaveBeenCalledWith(mediaId, raw.phoneNumberId);
+      },
+    );
+
+    it("keeps metadata-only media attachments when the inbound payload has no media ID", () => {
+      const raw = createImageRawMessage();
+      raw.message.image = {};
+      const downloadMedia = vi.fn();
+
+      const [attachment] = buildAttachments(raw, downloadMedia);
+
+      expect(attachment).toMatchObject({
+        type: "image",
+        url: "https://api.kapso.ai/media/photo.jpg",
+        mimeType: "image/jpeg",
+        name: "photo.jpg",
+        size: 204800,
+      });
+      expect(attachment?.fetchData).toBeUndefined();
+      expect(downloadMedia).not.toHaveBeenCalled();
     });
 
     it("builds location map attachments", () => {
-      const message: KapsoMessage = {
-        id: "wamid.location",
-        timestamp: "1730092800",
-        type: "location",
-        location: {
-          latitude: 14.0723,
-          longitude: -87.1921,
-          name: "Tegucigalpa",
+      const raw: KapsoRawMessage = {
+        phoneNumberId: "123456789",
+        userWaId: "15551234567",
+        message: {
+          id: "wamid.location",
+          timestamp: "1730092800",
+          type: "location",
+          location: {
+            latitude: 14.0723,
+            longitude: -87.1921,
+            name: "Tegucigalpa",
+          },
         },
       };
 
-      expect(buildAttachments(message)).toEqual([
+      expect(buildAttachments(raw)).toEqual([
         {
           type: "file",
           name: "Tegucigalpa",
@@ -221,10 +284,11 @@ describe("message-parser", () => {
           mimeType: "application/geo+json",
         },
       ]);
+      expect(buildAttachments(raw)[0]?.fetchData).toBeUndefined();
     });
 
     it("returns no attachments for plain text", () => {
-      expect(buildAttachments(createTextRawMessage().message)).toEqual([]);
+      expect(buildAttachments(createTextRawMessage())).toEqual([]);
     });
   });
 });

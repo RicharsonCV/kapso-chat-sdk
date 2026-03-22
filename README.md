@@ -136,38 +136,38 @@ Relevant Kapso docs:
 
 ### Messaging
 
-| Feature | Supported | Notes |
-| ------- | --------- | ----- |
-| Outbound text messages | Yes | `postMessage()` sends plain text through Kapso and automatically splits messages over 4096 characters at paragraph or line boundaries when possible. |
-| Buffered streaming | Yes | `stream()` buffers `string` and `markdown_text` chunks, ignores non-text stream chunks, and sends one final message through `postMessage()`. It does not attempt incremental edits because WhatsApp does not support them. |
-| Outbound cards | Limited | Cards with up to 3 action buttons are sent as WhatsApp interactive reply buttons. Button titles are truncated to 20 characters, and unsupported cards fall back to text. |
-| Reactions | Yes | `addReaction()` and `removeReaction()` send WhatsApp reactions through Kapso. Removing a reaction sends an empty emoji string. |
-| Mark messages as read | Yes | `markAsRead()` delegates to the Kapso SDK `messages.markRead()` helper. |
-| Message edit | No | Platform limitation. `editMessage()` throws because this integration does not support editing previously sent messages. |
-| Message delete | No | Platform limitation. `deleteMessage()` throws because this integration does not support deleting previously sent messages. |
-| Attachments, files, and other richer outbound message types | No | Adapter limitation. Attachments, files, media sends, templates, and other richer outbound message types are not implemented in this adapter yet. |
-| Typing indicator | No | No standalone adapter-level typing API is exposed here. `startTyping()` is an intentional parity no-op instead of guessing. |
+| Feature                                                     | Supported | Notes                                                                                                                                                                                                                      |
+| ----------------------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Outbound text messages                                      | Yes       | `postMessage()` sends plain text through Kapso and automatically splits messages over 4096 characters at paragraph or line boundaries when possible.                                                                       |
+| Buffered streaming                                          | Yes       | `stream()` buffers `string` and `markdown_text` chunks, ignores non-text stream chunks, and sends one final message through `postMessage()`. It does not attempt incremental edits because WhatsApp does not support them. |
+| Outbound cards                                              | Limited   | Cards with up to 3 action buttons are sent as WhatsApp interactive reply buttons. Button titles are truncated to 20 characters, and unsupported cards fall back to text.                                                   |
+| Reactions                                                   | Yes       | `addReaction()` and `removeReaction()` send WhatsApp reactions through Kapso. Removing a reaction sends an empty emoji string.                                                                                             |
+| Mark messages as read                                       | Yes       | `markAsRead()` delegates to the Kapso SDK `messages.markRead()` helper.                                                                                                                                                    |
+| Message edit                                                | No        | Platform limitation. `editMessage()` throws because this integration does not support editing previously sent messages.                                                                                                    |
+| Message delete                                              | No        | Platform limitation. `deleteMessage()` throws because this integration does not support deleting previously sent messages.                                                                                                 |
+| Attachments, files, and other richer outbound message types | No        | Adapter limitation. Outbound attachments, files, media sends, templates, and other richer outbound message types are not implemented in this adapter yet.                                                                  |
+| Typing indicator                                            | No        | No standalone adapter-level typing API is exposed here. `startTyping()` is an intentional parity no-op instead of guessing.                                                                                                |
 
 ### Inbound webhooks
 
-| Feature | Supported | Notes |
-| ------- | --------- | ----- |
-| `whatsapp.message.received` handling | Yes | `handleWebhook()` verifies `X-Webhook-Signature`, accepts POST requests only, and processes Kapso webhook payloads into Chat SDK messages. |
-| Buffered Kapso deliveries | Yes | Batched deliveries with `batch: true` and `X-Webhook-Batch: true` are expanded and processed one message at a time. |
-| Inbound text messages | Yes | Text bodies are surfaced as Chat SDK message text. |
-| Inbound media messages | Yes | Supported Kapso media payloads are converted into Chat SDK attachments plus readable fallback text. |
-| Inbound reaction messages | Yes | Live webhook reactions call `chat.processReaction(...)`, so `bot.onReaction(...)` fires. Empty `reaction.emoji` values are treated as reaction removal. |
-| Inbound interactive replies and button callbacks | Yes | Live interactive replies call `chat.processAction(...)`, so `bot.onAction(...)` fires instead of treating the reply as a plain message. |
-| Other Kapso webhook events | Ignored | The adapter acknowledges unsupported event types with `200 OK`, but only `whatsapp.message.received` is processed. |
+| Feature                                          | Supported | Notes                                                                                                                                                                                                                                                 |
+| ------------------------------------------------ | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `whatsapp.message.received` handling             | Yes       | `handleWebhook()` verifies `X-Webhook-Signature`, accepts POST requests only, and processes Kapso webhook payloads into Chat SDK messages.                                                                                                            |
+| Buffered Kapso deliveries                        | Yes       | Batched deliveries with `batch: true` and `X-Webhook-Batch: true` are expanded and processed one message at a time.                                                                                                                                   |
+| Inbound text messages                            | Yes       | Text bodies are surfaced as Chat SDK message text.                                                                                                                                                                                                    |
+| Inbound media messages                           | Yes       | Supported Kapso media payloads are converted into Chat SDK attachments plus readable fallback text. Image, document, audio, video, and sticker attachments also expose lazy `attachment.fetchData()` download support when Kapso includes a media ID. |
+| Inbound reaction messages                        | Yes       | Live webhook reactions call `chat.processReaction(...)`, so `bot.onReaction(...)` fires. Empty `reaction.emoji` values are treated as reaction removal.                                                                                               |
+| Inbound interactive replies and button callbacks | Yes       | Live interactive replies call `chat.processAction(...)`, so `bot.onAction(...)` fires instead of treating the reply as a plain message.                                                                                                               |
+| Other Kapso webhook events                       | Ignored   | The adapter acknowledges unsupported event types with `200 OK`, but only `whatsapp.message.received` is processed.                                                                                                                                    |
 
 ### History and thread info
 
-| Feature                  | Supported | Notes                                                                                                                |
-| ------------------------ | --------- | -------------------------------------------------------------------------------------------------------------------- |
-| Message history fetching | Yes       | `fetchMessages()` reads stored conversation history from Kapso and returns Chat SDK messages in chronological order. |
-| Historical reaction events | Limited | Reactions returned by `fetchMessages()` are still surfaced as fallback messages like `[Reaction: 👍]`; only live webhooks emit Chat SDK reaction events. |
-| Thread enrichment        | Yes       | `fetchThread()` enriches metadata with Kapso conversation and contact records when available.                        |
-| DMs                      | Yes       | All conversations are 1:1 DMs. `isDM()` always returns `true`.                                                       |
+| Feature                    | Supported | Notes                                                                                                                                                    |
+| -------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Message history fetching   | Yes       | `fetchMessages()` reads stored conversation history from Kapso and returns Chat SDK messages in chronological order.                                     |
+| Historical reaction events | Limited   | Reactions returned by `fetchMessages()` are still surfaced as fallback messages like `[Reaction: 👍]`; only live webhooks emit Chat SDK reaction events. |
+| Thread enrichment          | Yes       | `fetchThread()` enriches metadata with Kapso conversation and contact records when available.                                                            |
+| DMs                        | Yes       | All conversations are 1:1 DMs. `isDM()` always returns `true`.                                                                                           |
 
 ## Thread ID format
 

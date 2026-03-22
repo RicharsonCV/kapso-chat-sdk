@@ -132,7 +132,16 @@ export function extractMessageText(message: KapsoMessage): string {
   }
 }
 
-export function buildAttachments(message: KapsoMessage): Attachment[] {
+type KapsoMediaDownloader = (
+  mediaId: string,
+  phoneNumberId: string,
+) => Promise<Buffer>;
+
+export function buildAttachments(
+  raw: KapsoRawMessage,
+  downloadMedia?: KapsoMediaDownloader,
+): Attachment[] {
+  const { message, phoneNumberId } = raw;
   const type = message.type;
   const kapso = message.kapso;
   const mediaData = kapso?.mediaData ?? kapso?.media_data;
@@ -144,34 +153,50 @@ export function buildAttachments(message: KapsoMessage): Attachment[] {
   const pushMediaAttachment = (
     attachmentType: Attachment["type"],
     name?: string,
+    mediaId?: string,
   ) => {
-    attachments.push({
+    const attachment: Attachment = {
       type: attachmentType,
       url: mediaUrl,
       mimeType,
       name,
       size,
-    });
+    };
+
+    if (downloadMedia && typeof mediaId === "string" && mediaId.length > 0) {
+      attachment.fetchData = () => downloadMedia(mediaId, phoneNumberId);
+    }
+
+    attachments.push(attachment);
   };
 
   switch (type) {
     case "image":
-      pushMediaAttachment("image", mediaData?.filename);
+      pushMediaAttachment("image", mediaData?.filename, message.image?.id);
       break;
     case "video":
-      pushMediaAttachment("video", mediaData?.filename);
+      pushMediaAttachment("video", mediaData?.filename, message.video?.id);
       break;
     case "audio":
-      pushMediaAttachment("audio", mediaData?.filename ?? "audio");
+      pushMediaAttachment(
+        "audio",
+        mediaData?.filename ?? "audio",
+        message.audio?.id,
+      );
       break;
     case "document":
       pushMediaAttachment(
         "file",
         message.document?.filename ?? mediaData?.filename ?? "document",
+        message.document?.id,
       );
       break;
     case "sticker":
-      pushMediaAttachment("image", mediaData?.filename ?? "sticker");
+      pushMediaAttachment(
+        "image",
+        mediaData?.filename ?? "sticker",
+        message.sticker?.id,
+      );
       break;
     case "location": {
       const latitude = message.location?.latitude;
