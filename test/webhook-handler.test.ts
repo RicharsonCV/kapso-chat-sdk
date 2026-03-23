@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   buildWebhookRawMessage,
-  extractWebhookEventName,
   extractWebhookEvents,
   KAPSO_MESSAGE_RECEIVED_EVENT,
   verifyWebhookSignature,
@@ -17,7 +16,11 @@ describe("webhook-handler", () => {
       const body = JSON.stringify({ ok: true });
 
       expect(
-        verifyWebhookSignature(body, createWebhookSignature(body), "test-secret"),
+        verifyWebhookSignature(
+          body,
+          createWebhookSignature(body),
+          "test-secret",
+        ),
       ).toBe(true);
     });
 
@@ -25,19 +28,9 @@ describe("webhook-handler", () => {
       const body = JSON.stringify({ ok: true });
 
       expect(verifyWebhookSignature(body, null, "test-secret")).toBe(false);
-      expect(verifyWebhookSignature(body, "invalid", "test-secret")).toBe(false);
-    });
-  });
-
-  describe("extractWebhookEventName", () => {
-    it("reads the event field from payloads", () => {
-      expect(
-        extractWebhookEventName({ event: KAPSO_MESSAGE_RECEIVED_EVENT }),
-      ).toBe(KAPSO_MESSAGE_RECEIVED_EVENT);
-    });
-
-    it("returns undefined for non-record payloads", () => {
-      expect(extractWebhookEventName("hello")).toBeUndefined();
+      expect(verifyWebhookSignature(body, "invalid", "test-secret")).toBe(
+        false,
+      );
     });
   });
 
@@ -54,7 +47,6 @@ describe("webhook-handler", () => {
       expect(
         extractWebhookEvents(
           {
-            batch: true,
             data: [event, { invalid: true }],
           },
           "true",
@@ -63,7 +55,7 @@ describe("webhook-handler", () => {
     });
 
     it("returns an empty array for malformed batch payloads", () => {
-      expect(extractWebhookEvents({ batch: true }, "true")).toEqual([]);
+      expect(extractWebhookEvents({}, "true")).toEqual([]);
       expect(extractWebhookEvents("invalid", null)).toEqual([]);
     });
   });

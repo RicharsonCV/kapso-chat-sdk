@@ -52,7 +52,6 @@ import {
 } from "./thread-utils.js";
 import {
   buildWebhookRawMessage,
-  extractWebhookEventName,
   extractWebhookEvents,
   KAPSO_MESSAGE_RECEIVED_EVENT,
   verifyWebhookSignature,
@@ -180,7 +179,9 @@ function normalizeConversationPhoneNumber(
   return normalizeUserWaId(conversation.phoneNumber);
 }
 
-function resolveMessageContactName(message: UnifiedMessage): string | undefined {
+function resolveMessageContactName(
+  message: UnifiedMessage,
+): string | undefined {
   const contactName = message.kapso?.contactName;
   return typeof contactName === "string" && contactName.length > 0
     ? contactName
@@ -346,8 +347,7 @@ export class KapsoAdapter implements Adapter<KapsoThreadId, KapsoRawMessage> {
       return new Response("OK", { status: 200 });
     }
 
-    const eventName =
-      request.headers.get("x-webhook-event") ?? extractWebhookEventName(payload);
+    const eventName = request.headers.get("x-webhook-event");
 
     if (eventName && eventName !== KAPSO_MESSAGE_RECEIVED_EVENT) {
       this.logger.debug("Ignoring unsupported Kapso webhook event", {
@@ -419,19 +419,25 @@ export class KapsoAdapter implements Adapter<KapsoThreadId, KapsoRawMessage> {
       }
 
       if (raw.message.type === "reaction") {
-        this.logger.warn("Skipping Kapso reaction webhook missing target message", {
-          inboundMessageId: raw.message.id,
-          threadId,
-        });
+        this.logger.warn(
+          "Skipping Kapso reaction webhook missing target message",
+          {
+            inboundMessageId: raw.message.id,
+            threadId,
+          },
+        );
         continue;
       }
 
       if (raw.message.type === "interactive" || raw.message.type === "button") {
-        this.logger.warn("Skipping Kapso action webhook missing callback data", {
-          inboundMessageId: raw.message.id,
-          threadId,
-          type: raw.message.type,
-        });
+        this.logger.warn(
+          "Skipping Kapso action webhook missing callback data",
+          {
+            inboundMessageId: raw.message.id,
+            threadId,
+            type: raw.message.type,
+          },
+        );
         continue;
       }
 
@@ -900,7 +906,8 @@ export class KapsoAdapter implements Adapter<KapsoThreadId, KapsoRawMessage> {
   private buildAuthor(raw: KapsoRawMessage) {
     const senderId = resolveSenderId(raw);
     const isMe = senderId === this._botUserId;
-    const displayName = raw.contactName ?? (isMe ? this.userName : raw.userWaId);
+    const displayName =
+      raw.contactName ?? (isMe ? this.userName : raw.userWaId);
 
     return {
       userId: senderId,
@@ -1023,7 +1030,8 @@ export class KapsoAdapter implements Adapter<KapsoThreadId, KapsoRawMessage> {
 
         for (const conversation of page.data) {
           if (
-            normalizeConversationPhoneNumber(conversation) === normalizedUserWaId
+            normalizeConversationPhoneNumber(conversation) ===
+            normalizedUserWaId
           ) {
             matches.push(conversation);
           }

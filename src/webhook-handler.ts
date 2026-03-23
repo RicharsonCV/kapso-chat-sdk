@@ -25,18 +25,15 @@ export function verifyWebhookSignature(
     return false;
   }
 
-  const expected = createHmac("sha256", webhookSecret).update(body).digest("hex");
+  const expected = createHmac("sha256", webhookSecret)
+    .update(body)
+    .digest("hex");
 
   try {
     return timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
   } catch {
     return false;
   }
-}
-
-export function extractWebhookEventName(payload: unknown): string | undefined {
-  const payloadRecord = isRecord(payload) ? payload : undefined;
-  return readString(readValue(payloadRecord, "event"));
 }
 
 export function extractWebhookEvents(
@@ -52,8 +49,7 @@ export function extractWebhookEvents(
     return data.filter(isKapsoWebhookMessageReceivedEvent);
   }
 
-  const isBatch = batchHeader === "true" || readValue(payload, "batch") === true;
-  if (isBatch) {
+  if (batchHeader === "true") {
     return [];
   }
 
