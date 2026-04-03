@@ -1,5 +1,5 @@
 {
-  "name": "@richarson/kapso-chat-sdk",
+  "name": "@richarsoncv/kapso-chat-sdk",
   "version": "0.1.0",
   "description": "Unofficial Kapso adapter for Chat SDK",
   "type": "module",
